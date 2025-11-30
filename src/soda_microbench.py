@@ -107,15 +107,22 @@ class SodaMicrobench:
         search_cublas_algos_offline()
         print_utils.section_end(section)
         
-        # Profile baremetal performance
-        section = "Profile Baremetal GEMM Kernels"
+        # Profile baremetal performance (with index)
+        section = "Profile Baremetal GEMM Kernels (with algo index)"
         print_utils.section_start(section)
         print("This will run nsys profiling for multiple jobs, may take several minutes")
-        baremetal_gemm_sequences = profile_baremetal_gemm_kernels()
+        baremetal_gemm_sequences = profile_baremetal_gemm_kernels(use_algo_index=True, output_env_var="BAREMETAL_GEMM_KERNELS")
         print_utils.section_end(section)
         
-        # Verify baremetal sequences
-        section = "Verify Baremetal GEMM Sequences"
+        # Profile baremetal performance (without index)
+        section = "Profile Baremetal GEMM Kernels (without algo index)"
+        print_utils.section_start(section)
+        print("This will run nsys profiling for multiple jobs, may take several minutes")
+        baremetal_gemm_sequences_no_index = profile_baremetal_gemm_kernels(use_algo_index=False, output_env_var="BAREMETAL_GEMM_KERNELS_NO_INDEX")
+        print_utils.section_end(section)
+        
+        # Verify baremetal sequences (with index)
+        section = "Verify Baremetal GEMM Sequences (with index)"
         print_utils.section_start(section)
         # Align: target[i] -> baremetal[i+1] (skip null kernel at index 0)
         # Convert to Sequence objects (None stays None for skipped jobs)

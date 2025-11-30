@@ -93,30 +93,37 @@ def load_baremetal_results(baremetal_file):
     return results
 
 
-def compare_results(pytorch_results, baremetal_results):
+def compare_results(pytorch_results, baremetal_with_index_results, baremetal_no_index_results):
     """
-    Compare PyTorch and baremetal results.
+    Compare PyTorch, baremetal with index, and baremetal without index results.
     
     Returns: list of match entries
     """
     matches = []
     
     for job_id in sorted(pytorch_results.keys()):
-        if job_id not in baremetal_results:
-            print(f"Warning: Job {job_id} not found in baremetal results", file=sys.stderr)
+        if job_id not in baremetal_with_index_results:
+            print(f"Warning: Job {job_id} not found in baremetal (with index) results", file=sys.stderr)
+            continue
+        if job_id not in baremetal_no_index_results:
+            print(f"Warning: Job {job_id} not found in baremetal (no index) results", file=sys.stderr)
             continue
         
         pytorch = pytorch_results[job_id]
-        baremetal = baremetal_results[job_id]
+        bm_with_idx = baremetal_with_index_results[job_id]
+        bm_no_idx = baremetal_no_index_results[job_id]
         
         # Compute deltas (all values in microseconds)
         fw_avg = pytorch["stats"]["avg_kernel_tax"]
-        bm_avg = baremetal["stats"]["avg_kernel_tax"]
+        bm_with_idx_avg = bm_with_idx["stats"]["avg_kernel_tax"]
+        bm_no_idx_avg = bm_no_idx["stats"]["avg_kernel_tax"]
         
-        delta = fw_avg - bm_avg
-        # Calculate percentage difference: (FW - BM) / FW * 100
-        # Shows how much faster BM is compared to FW (base)
-        delta_pct = ((fw_avg - bm_avg) / fw_avg * 100) if fw_avg > 0 else 0.0
+        # Deltas: (FW - BM) / FW * 100
+        delta_with_idx = fw_avg - bm_with_idx_avg
+        delta_pct_with_idx = ((fw_avg - bm_with_idx_avg) / fw_avg * 100) if fw_avg > 0 else 0.0
+        
+        delta_no_idx = fw_avg - bm_no_idx_avg
+        delta_pct_no_idx = ((fw_avg - bm_no_idx_avg) / fw_avg * 100) if fw_avg > 0 else 0.0
         
         # Build match entry
         match_entry = {
@@ -134,15 +141,24 @@ def compare_results(pytorch_results, baremetal_results):
                 "max_kernel_tax": pytorch["stats"]["max_kernel_tax"],
                 "count": pytorch["stats"]["count"],
             },
-            "baremetal": {
-                "kernel_name": baremetal["kernel"]["name"],
-                "avg_kernel_tax": bm_avg,
-                "min_kernel_tax": baremetal["stats"]["min_kernel_tax"],
-                "max_kernel_tax": baremetal["stats"]["max_kernel_tax"],
-                "count": baremetal["stats"]["count"],
+            "baremetal_with_index": {
+                "kernel_name": bm_with_idx["kernel"]["name"],
+                "avg_kernel_tax": bm_with_idx_avg,
+                "min_kernel_tax": bm_with_idx["stats"]["min_kernel_tax"],
+                "max_kernel_tax": bm_with_idx["stats"]["max_kernel_tax"],
+                "count": bm_with_idx["stats"]["count"],
             },
-            "delta": delta,
-            "delta_pct": delta_pct,
+            "baremetal_no_index": {
+                "kernel_name": bm_no_idx["kernel"]["name"],
+                "avg_kernel_tax": bm_no_idx_avg,
+                "min_kernel_tax": bm_no_idx["stats"]["min_kernel_tax"],
+                "max_kernel_tax": bm_no_idx["stats"]["max_kernel_tax"],
+                "count": bm_no_idx["stats"]["count"],
+            },
+            "delta_with_index": delta_with_idx,
+            "delta_pct_with_index": delta_pct_with_idx,
+            "delta_no_index": delta_no_idx,
+            "delta_pct_no_index": delta_pct_no_idx,
         }
         
         matches.append(match_entry)
@@ -159,15 +175,17 @@ def print_summary(matches, baseline_tax=None):
             match["job_id"],
             kernel_name,
             f"{match['framework']['avg_kernel_tax']:.2f}",
-            f"{match['baremetal']['avg_kernel_tax']:.2f}",
-            f"{match['delta_pct']:.1f}",
+            f"{match['baremetal_no_index']['avg_kernel_tax']:.2f}",
+            f"{match['baremetal_with_index']['avg_kernel_tax']:.2f}",
+            f"{match['delta_pct_no_index']:.1f}",
+            f"{match['delta_pct_with_index']:.1f}",
         ])
 
     if per_kernel_rows:
         title_suffix = f" | Baseline (null kernel): {baseline_tax:.2f} μs" if baseline_tax is not None else ""
         print_utils.comp_table(
             title=f"Per-Kernel Results ({len(per_kernel_rows)} kernels){title_suffix}",
-            headers=["ID", "Kernel", "Framework (μs)", "Baremetal (μs)", "Δ(%)"],
+            headers=["ID", "Kernel", "Framework (μs)", "BM no index (μs)", "BM with index (μs)", "Δ no idx (%)", "Δ with idx (%)"],
             data=per_kernel_rows,
         )
 
@@ -177,24 +195,30 @@ def report():
     Main comparison function.
     """
     pytorch_file = utils.get_path("PYTORCH_GEMM_SEQUENCES")
-    baremetal_file = utils.get_path("BAREMETAL_GEMM_KERNELS")
+    baremetal_with_index_file = utils.get_path("BAREMETAL_GEMM_KERNELS")
+    baremetal_no_index_file = utils.get_path("BAREMETAL_GEMM_KERNELS_NO_INDEX")
     output_file = utils.get_path("FINAL_REPORT")
     
     utils.ensure_file(pytorch_file)
-    utils.ensure_file(baremetal_file)
+    utils.ensure_file(baremetal_with_index_file)
+    utils.ensure_file(baremetal_no_index_file)
     
     print(f"Loading PyTorch sequences from {pytorch_file}")
     pytorch_results = load_pytorch_results(pytorch_file)
     print(f"Loaded {len(pytorch_results)} PyTorch sequences")
     
-    print(f"Loading baremetal sequences from {baremetal_file}")
-    baremetal_results = load_baremetal_results(baremetal_file)
-    print(f"Loaded {len(baremetal_results)} baremetal sequences")
+    print(f"Loading baremetal sequences (with index) from {baremetal_with_index_file}")
+    baremetal_with_index_results = load_baremetal_results(baremetal_with_index_file)
+    print(f"Loaded {len(baremetal_with_index_results)} baremetal (with index) sequences")
     
-    # Extract null kernel tax for baseline
+    print(f"Loading baremetal sequences (no index) from {baremetal_no_index_file}")
+    baremetal_no_index_results = load_baremetal_results(baremetal_no_index_file)
+    print(f"Loaded {len(baremetal_no_index_results)} baremetal (no index) sequences")
+    
+    # Extract null kernel tax for baseline (use with_index file)
     null_kernel_tax = None
 
-    baremetal_data = utils.load_json(baremetal_file)
+    baremetal_data = utils.load_json(baremetal_with_index_file)
     for sequence in baremetal_data["sequences"]:
         # Skip None entries (e.g., skipped batched GEMM jobs)
         if sequence is None:
@@ -206,7 +230,7 @@ def report():
             break
     
     # Compare
-    matches = compare_results(pytorch_results, baremetal_results)
+    matches = compare_results(pytorch_results, baremetal_with_index_results, baremetal_no_index_results)
     
     # Print summary
     print_summary(matches, baseline_tax=null_kernel_tax)

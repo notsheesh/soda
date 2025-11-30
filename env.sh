@@ -57,6 +57,7 @@ export PYTORCH_KERNEL_TAX_GRAPHS="$PYTORCH_OUTPUT_DIR/graphs/kernel_tax"
 # Baremetal
 export BAREMETAL_JOBS="$BAREMETAL_OUTPUT_DIR/jobs.json"
 export BAREMETAL_GEMM_KERNELS="$BAREMETAL_OUTPUT_DIR/baremetal_gemm_profile.json"
+export BAREMETAL_GEMM_KERNELS_NO_INDEX="$BAREMETAL_OUTPUT_DIR/baremetal_gemm_profile_no_index.json"
 export BAREMETAL_TRACES="$BAREMETAL_OUTPUT_DIR/traces"
 
 export FINAL_REPORT="microbench/bm_vs_pytorch_report.json"

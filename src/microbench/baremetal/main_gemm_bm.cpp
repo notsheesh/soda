@@ -562,15 +562,16 @@ void run_gemm(const GemmParams& params) {
         int requested_algo_count = params.has_algo_index ? DIAGNOSTIC_ALGO_COUNT : PYTORCH_DEFAULT_ALGO_COUNT;
         
         std::vector<cublasLtMatmulHeuristicResult_t> heuristic_results(requested_algo_count);
-    int returned_results = 0;
-    CHECK_CUBLASLT(cublasLtMatmulAlgoGetHeuristic(handle, matmul_desc,
-                                                   A_desc, B_desc, C_desc, C_desc,
-                                                       preference, requested_algo_count,
-                                                       heuristic_results.data(), &returned_results));
+
+        int returned_results = 0;
+        CHECK_CUBLASLT(cublasLtMatmulAlgoGetHeuristic(handle, matmul_desc,
+                                                        A_desc, B_desc, C_desc, C_desc,
+                                                        preference, requested_algo_count,
+                                                        heuristic_results.data(), &returned_results));
     
-    if (returned_results == 0) {
-        std::cerr << "Error: No cuBLASLt algorithm found" << std::endl;
-        exit(EXIT_FAILURE);
+        if (returned_results == 0) {
+            std::cerr << "Error: No cuBLASLt algorithm found" << std::endl;
+            exit(EXIT_FAILURE);
         }
         
         // Print available algorithm count (for debugging when doing algorithm sweeps)

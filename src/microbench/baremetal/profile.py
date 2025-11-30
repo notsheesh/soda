@@ -22,9 +22,13 @@ from common import print_utils
 from data import CPUOp
 
 
-def run_job(job):
+def run_job(job, use_algo_index=True):
     """
     Run a single job under nsys profiling and emit sqlite trace.
+    
+    Args:
+        job: Job dictionary
+        use_algo_index: If True, use cublas_index from job. If False, skip algo_index even if available.
     """
     job_id = job["id"]
     
@@ -52,7 +56,7 @@ def run_job(job):
         if "batch" in job:
             args = args + ["--batch", str(job["batch"])]
         
-        if matched_algo_idx is not None:
+        if use_algo_index and matched_algo_idx is not None:
             args = args + ["--algo_index", str(matched_algo_idx)]
     
     trace_file_name = f"trace_{job_id}"
@@ -168,9 +172,13 @@ def parse_trace_and_compute_stats(job, trace_file_sql, runs, warmup=0):
     # Format: {meta: {avg_kernel_tax, ...}, kernel: {...}, cuda_launch: {...}, cpu_op: {...}}
     return aggregated_sequences[0]
 
-def profile_baremetal_gemm_kernels() -> Dict[str, Any]:
+def profile_baremetal_gemm_kernels(use_algo_index=True, output_env_var="BAREMETAL_GEMM_KERNELS") -> Dict[str, Any]:
     """
-    Profile baremetal GEMM kernels for all jobs using matched algorithms.
+    Profile baremetal GEMM kernels for all jobs.
+    
+    Args:
+        use_algo_index: If True, use cublas_index from jobs. If False, skip algo_index (use heuristic default).
+        output_env_var: Environment variable name for output file path.
     
     Returns:
         Dictionary with profiled baremetal GEMM sequences data (same format as saved JSON).
@@ -182,13 +190,16 @@ def profile_baremetal_gemm_kernels() -> Dict[str, Any]:
     jobs = jobs_data["jobs"]
     print(f"Loaded {len(jobs)} jobs.")
     
-    # Check if offline cublas algorithm search has been completed
-    if "offline_cublas_search" in jobs_data["summary"]:
-        offline_cublas_search = jobs_data["summary"]["offline_cublas_search"]
-        algos_found = offline_cublas_search["algos_found"]
-        print(f"Using {algos_found} matched algorithms")
+    # Check if offline cublas algorithm search has been completed (only needed if using index)
+    if use_algo_index:
+        if "offline_cublas_search" in jobs_data["summary"]:
+            offline_cublas_search = jobs_data["summary"]["offline_cublas_search"]
+            algos_found = offline_cublas_search["algos_found"]
+            print(f"Using {algos_found} matched algorithms")
+        else:
+            raise RuntimeError("Offline cublas algorithm search has not been completed.")
     else:
-        raise RuntimeError("Offline cublas algorithm search has not been completed.")
+        print("Using heuristic default algorithm (index 0)")
     
     # Build binary
     build_binary()
@@ -207,7 +218,7 @@ def profile_baremetal_gemm_kernels() -> Dict[str, Any]:
             sequences.append(None)  # Append None to maintain alignment
             continue
         
-        trace_file_sql = run_job(job)
+        trace_file_sql = run_job(job, use_algo_index=use_algo_index)
         if trace_file_sql is None:
             raise Exception(f"No trace file found for job {job['id']}")
         
@@ -226,7 +237,7 @@ def profile_baremetal_gemm_kernels() -> Dict[str, Any]:
         
         sequences.append(sequence)
     
-    baremetal_gemm_sequences_file = utils.get_path("BAREMETAL_GEMM_KERNELS")
+    baremetal_gemm_sequences_file = utils.get_path(output_env_var)
     baremetal_gemm_sequences_data = {
         "summary": {"count": len(sequences)},
         "sequences": sequences,
