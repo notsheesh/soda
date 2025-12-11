@@ -71,7 +71,7 @@ def run_job(job, warmup: int, runs: int):
     )
 
     if not success:
-        print(f"nsys profiling failed for job {job_id}:\n{message}", file=sys.stderr)
+        print(f"nsys profiling failed for job {job_id}:\n{message}")
         return None
 
     return trace_file_sql
@@ -261,8 +261,7 @@ def profile_baremetal_gemm_kernels(
         if skip_offline_cublas_algo_search:
             print(
                 "Skipping offline cuBLASLt algorithm search metadata; "
-                "profiling baremetal kernels with heuristic cuBLASLt algorithms.",
-                file=sys.stderr,
+                "profiling baremetal kernels with heuristic cuBLASLt algorithms."
             )
         else:
             raise RuntimeError("Offline cublas algorithm search has not been completed.")

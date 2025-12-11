@@ -31,7 +31,7 @@ fi
 
 # Verify soda-cli is available, install if not
 if ! command -v soda-cli &> /dev/null; then
-    echo "Installing soda package..."
+    echo "Installing soda package"
     pip install -e "$SODA_ROOT" --quiet
 fi
 

@@ -14,8 +14,8 @@ from soda.common import utils
 def ensure_env_loaded() -> None:
     """Exit early if env.sh was not sourced."""
     if not os.environ.get("SODA_ENV_LOADED"):
-        print("Error: SODA environment not loaded.", file=sys.stderr)
-        print("Please run: source env.sh", file=sys.stderr)
+        print("Error: SODA environment not loaded.")
+        print("Please run: source env.sh")
         sys.exit(1)
 
 

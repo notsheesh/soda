@@ -20,8 +20,8 @@ from experiments.sweep.config import PARAMS, PREF_SWEEP_CONFIGS, DEC_SWEEP_CONFI
 def ensure_env_loaded() -> None:
     """Exit early if env.sh was not sourced."""
     if not os.environ.get("SODA_ENV_LOADED"):
-        print("Error: SODA environment not loaded.", file=sys.stderr)
-        print("Please run: source env.sh", file=sys.stderr)
+        print("Error: SODA environment not loaded.")
+        print("Please run: source env.sh")
         sys.exit(1)
 
 
@@ -75,7 +75,7 @@ def main() -> None:
                 microbench.run()
             except RuntimeError as e:
                 if "out of memory" in str(e).lower():
-                    print(f"Skipping {config_name} bs={bs}, sl={sl}, max_new_tokens={max_new_tokens} due to OOM: {e}", file=sys.stderr)
+                    print(f"Skipping {config_name} bs={bs}, sl={sl}, max_new_tokens={max_new_tokens} due to OOM: {e}")
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                     continue

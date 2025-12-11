@@ -5,7 +5,6 @@ Analyze CPU–GPU dynamics of PyTorch models.
 
 import argparse
 import json
-import logging
 import os
 import sys
 from datetime import datetime
@@ -37,11 +36,8 @@ except ImportError:
 from soda.common import utils
 from soda.microbench.microbench import SodaMicrobench
 
-# Global logger reference
-LOGGER = logging.getLogger("soda")
-
 # Public API
-__all__ = ['ModelTracer', 'SodaAnalyzer', 'SodaLogger', 'LOGGER']
+__all__ = ['ModelTracer', 'SodaAnalyzer']
 
 class SodaAnalyzer:
     """
@@ -125,7 +121,6 @@ class SodaAnalyzer:
                     sequences,
                     f,
                     self.args.prox_score,
-                    logger=None
                 )
 
         # Framework overhead (CPU-side latency)
@@ -339,58 +334,6 @@ class SodaAnalyzer:
         self.report()
         return self.save()
 
-class SodaLogger:
-    """
-    Logger class for SODA that supports both file and console output.
-    """
-    
-    def __init__(self, output_dir: Path, is_console: bool = True, is_file: bool = True):
-        """
-        Initialize the logger.
-        
-        Args:
-            output_dir: Directory where log file will be created.
-            is_console: If True, write to console/stdout.
-            is_file: If True, write to file.
-        """
-        self.log_path = output_dir / "soda.log"
-        self.is_console = is_console
-
-        self.is_file = is_file
-        
-        # Create logger
-        global LOGGER
-        self.logger = LOGGER
-        self.logger.setLevel(logging.DEBUG)
-        
-        # Remove existing handlers to avoid duplicates
-        self.logger.handlers.clear()
-        
-        # Create formatter without timestamp
-        formatter = logging.Formatter('%(message)s')
-        
-        # File handler - writes to file
-        if self.is_file:
-            file_handler = logging.FileHandler(self.log_path, mode='w')
-            file_handler.setLevel(logging.DEBUG)
-            file_handler.setFormatter(formatter)
-            self.logger.addHandler(file_handler)
-        
-        # Console handler - writes to stdout
-        if self.is_console:
-            console_handler = logging.StreamHandler(sys.stdout)
-            console_handler.setLevel(logging.DEBUG)
-            console_handler.setFormatter(formatter)
-            self.logger.addHandler(console_handler)
-        
-        # Log initial message
-        self.logger.info(f"Results will be saved to: {output_dir.resolve()}")
-    
-    def cleanup(self):
-        """Clean up logging handlers."""
-        self.logger.handlers.clear()
-
-
 class ModelTracer:
     """Handles loading of Hugging Face models with specific configurations."""
 
@@ -405,9 +348,8 @@ class ModelTracer:
         self.model_name = args.model
         self.device = torch.device(args.device)
         self.compile_type = args.compile_type
-        # DEBUG: Print precision settings
-        print(f"DEBUG: args.precision='{args.precision}'")
         self.is_fp8 = args.precision == "float8_e4m3fn"
+        print(f"DEBUG: args.precision='{args.precision}'")
         print(f"DEBUG: self.is_fp8={self.is_fp8}")
         
         self.precision = utils.parse_dtype_to_torch(args.precision)
@@ -451,7 +393,7 @@ class ModelTracer:
         # Output directory for experiment group: <output_dir>/<experiment_group>
         self.experiment_group_dir = args.output_dir / self.experiment_group
         utils.ensure_dir(self.experiment_group_dir)
-        
+
         # Output directory for trace: <output_dir>/<experiment_group>/<experiment_name>
         self.output_dir = args.output_dir / self.experiment_group / self.experiment_name
         utils.ensure_dir(self.output_dir)
@@ -521,7 +463,7 @@ class ModelTracer:
         """
         Convert Linear layer weights to FP8 E4M3 for inference if quantization config is unavailable.
         """
-        print("Converting linear layer weights to float8_e4m3fn...")
+        print("Converting linear layer weights to float8_e4m3fn")
 
         converted_count = 0
         for _, module in model.named_modules():
@@ -587,13 +529,11 @@ class ModelTracer:
             # Option 1: Use Transformer Engine (recommended for H100)
             import transformer_engine.pytorch as te
             from transformer_engine.common.recipe import DelayedScaling, Format
-            from transformers import AutoModelForCausalLM, AutoConfig
             
-            config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
-            print("DEBUG: Loading model in BFloat16 before TE replacement...")
+            config = transformers.AutoConfig.from_pretrained(model_name, trust_remote_code=True)
             
             # Load in bfloat16 first
-            model = AutoModelForCausalLM.from_pretrained(
+            model = transformers.AutoModelForCausalLM.from_pretrained(
                 model_name,
                 config=config,
                 torch_dtype=torch.bfloat16,
@@ -602,7 +542,7 @@ class ModelTracer:
             )
             
             # Replace nn.Linear with TE Linear layers to enable FP8 autocast
-            LOGGER.info("Replacing nn.Linear with TransformerEngine Linear layers...")
+            print("Replacing nn.Linear with TransformerEngine Linear layers")
             self._replace_linear_with_te(model)
             
             # Apply FP8 recipe using correct API import
@@ -613,16 +553,15 @@ class ModelTracer:
                 amax_compute_algo="max",
             )
             
-            LOGGER.info(f"Loaded {model_name} with Transformer Engine FP8")
+            print(f"Loaded {model_name} with Transformer Engine FP8")
             # NOTE: Do NOT manually convert to FP8 here. TE handles it via autocast.
             return model, fp8_recipe
             
         except ImportError:
             # Option 2: Fallback to manual FP8 casting (limited support)
-            LOGGER.warning("Transformer Engine not available. Using manual FP8 casting.")
-            from transformers import AutoModelForCausalLM
+            print("Warning: Transformer Engine not available. Using manual FP8 casting.")
             
-            model = AutoModelForCausalLM.from_pretrained(
+            model = transformers.AutoModelForCausalLM.from_pretrained(
                 model_name,
                 torch_dtype=torch.bfloat16,  # Load as bf16, cast later
                 device_map="auto",
@@ -632,11 +571,10 @@ class ModelTracer:
             model = self._convert_to_fp8(model)
             return model, None
         except AttributeError:
-             # Option 3: Fallback if TE API is different/older
-            LOGGER.warning("Transformer Engine API mismatch. Using manual FP8 casting.")
-            from transformers import AutoModelForCausalLM
+            # Option 3: Fallback if TE API is different/older
+            print("Warning: Transformer Engine API mismatch. Using manual FP8 casting.")
             
-            model = AutoModelForCausalLM.from_pretrained(
+            model = transformers.AutoModelForCausalLM.from_pretrained(
                 model_name,
                 torch_dtype=torch.bfloat16,
                 device_map="auto",
@@ -847,7 +785,7 @@ class ModelTracer:
         """
         Profiles the generate step of Whisper (encoder-decoder).
         """
-        LOGGER.info("=== Profiling Whisper Model Forward Pass ===")
+        print("=== Profiling Whisper Model Forward Pass ===")
         
         # Warm-up runs
         with torch.no_grad():
@@ -994,8 +932,8 @@ def main() -> int:
     # Check if env.sh has been sourced and loaded
     if "SODA_ENV_LOADED" not in os.environ:
         # Use stderr for early errors before logger is set up
-        print("Error: SODA environment not loaded.", file=sys.stderr)
-        print("Please run: source env.sh", file=sys.stderr)
+        print("Error: SODA environment not loaded.")
+        print("Please run: source env.sh")
         sys.exit(1)
 
     try:
@@ -1022,13 +960,13 @@ def main() -> int:
         return 0
 
     except FileNotFoundError as e:
-        print(f"Error: File not found: {e}", file=sys.stderr)
+        print(f"Error: File not found: {e}")
         return 1
     except RuntimeError as e:
-        print(f"Error: Runtime error during profiling: {e}", file=sys.stderr)
+        print(f"Error: Runtime error during profiling: {e}")
         return 1
     except Exception as e:
-        print(f"Error: Unexpected error: {e}", file=sys.stderr)
+        print(f"Error: Unexpected error: {e}")
         traceback.print_exc()
         return 1
 

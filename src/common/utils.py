@@ -688,23 +688,23 @@ def parse_and_validate_args(args=None) -> argparse.Namespace:
         parsed_args.precision = "float32"
 
     if not torch.cuda.is_available() and parsed_args.device == "cuda":
-        print("Error: CUDA is not available. Please select --device cpu.", file=sys.stderr)
+        print("Error: CUDA is not available. Please select --device cpu.")
         sys.exit(1)
 
     if parsed_args.max_new_tokens < 1:
-        print("Error: --max-new-tokens must be >= 1.", file=sys.stderr)
+        print("Error: --max-new-tokens must be >= 1.")
         sys.exit(1)
 
     if parsed_args.precision == "float8_e4m3fn":
         if not hasattr(torch, "float8_e4m3fn"):
-            print("Error: FP8 requires PyTorch 2.1+ with float8 support.", file=sys.stderr)
+            print("Error: FP8 requires PyTorch 2.1+ with float8 support.")
             sys.exit(1)
 
         if parsed_args.device == "cuda":
             capability = torch.cuda.get_device_capability()
             if capability[0] < 9 and not (capability[0] == 8 and capability[1] >= 9):
-                print(f"Warning: FP8 typically requires SM89+ (Ada/Hopper). Detected SM{capability[0]}{capability[1]}.", file=sys.stderr)
-                print("FP8 may not be hardware-accelerated on this device.", file=sys.stderr)
+                print(f"Warning: FP8 typically requires SM89+ (Ada/Hopper). Detected SM{capability[0]}{capability[1]}.")
+                print("FP8 may not be hardware-accelerated on this device.")
     
     return parsed_args
 
@@ -993,9 +993,6 @@ def link_sequences(events: Dict[str, Any]) -> List[Dict]:
     Returns:
         List of event sequence dictionaries with keys: kernel, cuda_launch, aten_op.
     """
-
-    import logging
-    logger = logging.getLogger("soda")
 
     # Torch ops are only available during PyTorch microbenchmarking
     torch_ops = events["cpu"].get("torch_ops", {})
@@ -1603,7 +1600,7 @@ def analyze_per_stream(events: Dict[str, Any]) -> Dict:
     
     return dict(stream_info)
 
-def analyze_kernel_fusion_candidates(sequences: List[Dict], exact_length: int, prox_score_threshold: float, logger=None) -> Optional[Dict]:
+def analyze_kernel_fusion_candidates(sequences: List[Dict], exact_length: int, prox_score_threshold: float) -> Optional[Dict]:
     """
     Analyzes kernel launch sequences to find opportunities for fusion.
 
@@ -1611,14 +1608,12 @@ def analyze_kernel_fusion_candidates(sequences: List[Dict], exact_length: int, p
         sequences: List of event sequence dictionaries.
         exact_length: The exact length of sequences to analyze.
         prox_score_threshold: The proximity score required to recommend a fusion (e.g., 1.0 for deterministic).
-        logger: Optional logger instance for logging results. If None, no logging is performed.
         
     Returns:
         Dictionary with fusion analysis results, or None if no candidates found or invalid input.
     """
     if exact_length < 2:
-        if logger:
-            logger.warning("Sequence length must be at least 2.")
+        print("Sequence length must be at least 2.")
         return None
 
     all_segments = []
@@ -1673,21 +1668,17 @@ def analyze_kernel_fusion_candidates(sequences: List[Dict], exact_length: int, p
                 fusion_recommendations.append((chain, count, proximity_score))
     
     # Report findings
-    if logger:
-        logger.info(f"=== Fusion Analysis (Length={exact_length}, Threshold={prox_score_threshold}) ===")
     if not fusion_recommendations:
-        if logger:
-            logger.info("\t* No kernel chains met the fusion criteria.")
         return None
 
     sorted_recommendations = sorted(fusion_recommendations, key=lambda x: x[1], reverse=True)
-    if logger:
-        logger.info(f"\t* Found {len(sorted_recommendations)} potential fusion candidates:")
-        for idx, (chain, count, score) in enumerate(sorted_recommendations, 1):
-            logger.info(f"\t* Chain {idx}\tFound {count} times\tProx. Score = {score:.2f}")
-            for kernel in chain:
-                logger.info(f"\t\t** {kernel}")
-        logger.info("")
+    print(f"=== Fusion Analysis (Length={exact_length}, Threshold={prox_score_threshold}) ===")
+    print(f"\t* Found {len(sorted_recommendations)} potential fusion candidates:")
+    for idx, (chain, count, score) in enumerate(sorted_recommendations, 1):
+        print(f"\t* Chain {idx}\tFound {count} times\tProx. Score = {score:.2f}")
+        for kernel in chain:
+            print(f"\t\t** {kernel}")
+    print("")
     
     # Return structured results
     return {

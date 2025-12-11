@@ -248,7 +248,7 @@ def generate_jobs(target_sequences: dict):
         
         # Skip if critical params missing
         if "m" not in params or "n" not in params or "k" not in params:
-            print(f"Warning: Skipping sequence {job_id} - missing M/N/K", file=sys.stderr)
+            print(f"Warning: Skipping sequence {job_id} - missing M/N/K")
             continue
         
         # Build job entry

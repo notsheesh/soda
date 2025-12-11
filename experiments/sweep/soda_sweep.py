@@ -25,23 +25,9 @@ from experiments.sweep.config import GEN_PARAMS, PRECISION_MAP, SWEEP_CONFIG_MAP
 def ensure_env_loaded() -> None:
     """Exit early if env.sh was not sourced."""
     if not os.environ.get("SODA_ENV_LOADED"):
-        print("Error: SODA environment not loaded.", file=sys.stderr)
-        print("Please run: source env.sh", file=sys.stderr)
+        print("Error: SODA environment not loaded.")
+        print("Please run: source env.sh")
         sys.exit(1)
-
-def get_gpu_suffix() -> str:
-    """Returns a short GPU suffix (e.g., H100, A100) or 'cpu'."""
-    if not torch.cuda.is_available():
-        return "cpu"
-    name = torch.cuda.get_device_name(0)
-    if "H100" in name: return "H100"
-    if "H200" in name: return "H200"
-    if "A100" in name: return "A100"
-    if "V100" in name: return "V100"
-    if "T4" in name: return "T4"     # ADD THIS LINE
-    if "L4" in name: return "L4"     # ADD THIS LINE (for the L4 node)
-    if "4090" in name: return "4090"
-    return "gpu"
 
 def filter_sweep_config(sweep_config: Dict, sweep_model_filter: str) -> Dict:
     # Parse "export SWEEP_MODEL_FILTER=a,b,c" into ["a", "b", "c"], strip whitespaces and drop empty strings
@@ -55,14 +41,14 @@ def filter_sweep_config(sweep_config: Dict, sweep_model_filter: str) -> Dict:
             filtered_sweep_config[model] = sweep_config[model]
         else:
             log = f"Warning: Model '{model}' not found in sweep config for {sweep_mode}.\nAvailable models: {avail_model_str}"
-            print(log, file=sys.stderr)
+            print(log)
 
     assert filtered_sweep_config, f"Error: No valid models found in sweep config for {sweep_mode}.\nAvailable models: {avail_model_str}"
 
 def main() -> None:
     ensure_env_loaded()
 
-    gpu_suffix = get_gpu_suffix()
+    gpu_suffix = utils.get_gpu()
 
     compile_type = GEN_PARAMS["compile_type"]
     device = GEN_PARAMS["device"]
@@ -128,7 +114,7 @@ def main() -> None:
 
             except RuntimeError as e:
                 if "out of memory" in str(e).lower():
-                    print(f"Skipping batch_size={bs}, seq_len={sl}, max_new_tokens={mt} due to OOM: {e}", file=sys.stderr)
+                    print(f"Skipping batch_size={bs}, seq_len={sl}, max_new_tokens={mt} due to OOM: {e}")
                     
                     # FIX: Generate a report.json that MATCHES soda.py structure
                     run_output_dir = tracer.output_dir

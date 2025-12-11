@@ -144,7 +144,7 @@ def collect_reports(root: Path) -> List[Dict]:
         try:
             data = json.loads(report_path.read_text())
         except Exception as exc:
-            print(f"Skipping {report_path}: unable to read JSON ({exc})", file=sys.stderr)
+            print(f"Skipping {report_path}: unable to read JSON ({exc})")
             continue
 
         metadata = data.get("metadata", {})
@@ -510,12 +510,12 @@ def main() -> int:
     args = parse_args()
     root = args.root.resolve()
     if not root.exists():
-        print(f"Path does not exist: {root}", file=sys.stderr)
+        print(f"Path does not exist: {root}")
         return 1
     try:
         summarize(root)
     except RuntimeError as exc:
-        print(str(exc), file=sys.stderr)
+        print(str(exc))
         return 1
     return 0
 
