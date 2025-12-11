@@ -307,22 +307,22 @@ def check_assert(condition: bool, log: str, excuse: bool = False) -> None:
 
     # Check if running in non-interactive mode (e.g., SLURM batch job)
     # In non-interactive mode, auto-excuse with a warning instead of blocking
-    import sys
     if not sys.stdin.isatty():
-        print(f"[WARNING] Assertion failed (auto-excused in non-interactive mode): {log}")
+        print(f"Assertion failed: {log}")
+        print("Auto-excusing assertion failure in non-interactive mode.")
         print(f"Review logs @ {get_path('ASSERT_LOG')}")
         return
 
     # Otherwise, ask the user if they want to excuse the assertion failure
-    print(f"Assertion failed: {log}")
-    print(f"Review logs @ {get_path('ASSERT_LOG')}")
     print("Do you want to excuse this assertion failure? (y/n)")
     try:
         if input().strip().lower() == "y":
             return
     except EOFError:
         # Handle case where stdin is closed unexpectedly
-        print(f"[WARNING] Assertion failed (auto-excused due to EOF): {log}")
+        print("Auto-excusing assertion failure due to EOF.")
+        print(f"Assertion failed: {log}")
+        print(f"Review logs @ {get_path('ASSERT_LOG')}")
         return
 
     # Otherwise, raise an error
@@ -1254,6 +1254,49 @@ def get_top_k_kernels(events: Dict[str, Any], k: int = 3) -> Dict[str, List[Tupl
         "by_duration": top_k_by_dur
     }
 
+def get_experiment_signature(
+    model: str,
+    compile_type: str,
+    precision: str,
+    batch_size: int,
+    seq_len: int,
+    max_new_tokens: int,
+    gpu: str,
+) -> Tuple[str, str]:
+    """
+    Build (experiment_group, experiment_name) identifiers.
+
+    - experiment_group: <model>_<compile_type>_<precision>_<gpu>
+    - experiment_name:  <model>_<compile_type>_<precision>_<gpu>_bsX_slY_mtZ
+
+    Args:
+        model: Model name (e.g., "gpt2" or "meta-llama/Llama-3.2-3B").
+        compile_type: Compilation type (e.g., "eager", "torch.compile").
+        precision: Precision string (e.g., "bfloat16", "float16").
+        batch_size: Batch size.
+        seq_len: Sequence length.
+        max_new_tokens: Number of new tokens generated during tracing.
+        gpu: GPU identifier (e.g., "H100", "H200").
+
+    Returns:
+        Tuple of (experiment_group, experiment_name).
+    """
+    model_slug = model.replace("/", "_")
+
+    group_parts = [model_slug, compile_type, precision]
+    if gpu:
+        group_parts.append(gpu)
+    experiment_group = "_".join(group_parts)
+
+    name_parts = group_parts + [
+        f"bs{batch_size}",
+        f"sl{seq_len}",
+        f"mt{max_new_tokens}",
+    ]
+    experiment_name = "_".join(name_parts)
+    return experiment_group, experiment_name
+
+
 def generate_experiment_name(
     model: str,
     compile_type: str,
@@ -1263,24 +1306,39 @@ def generate_experiment_name(
     max_new_tokens: int,
 ) -> str:
     """
-    Generates a unique experiment directory name from arguments.
-    
-    Args:
-        model: Model name (e.g., "gpt2" or "meta-llama/Llama-3.2-3B").
-        compile_type: Compilation type (e.g., "eager", "torch.compile").
-        precision: Precision string (e.g., "bfloat16", "float16").
-        batch_size: Batch size.
-        seq_len: Sequence length.
-        max_new_tokens: Number of new tokens generated during tracing.
-        
-    Returns:
-        Experiment directory name string.
+    Backward-compatible wrapper returning only the experiment name.
     """
-    return (
-        f"{model.replace('/', '_')}_{compile_type}_{precision}"
-        f"_bs{batch_size}_sl{seq_len}_mt{max_new_tokens}"
+    _, experiment_name = get_experiment_signature(
+        model,
+        compile_type,
+        precision,
+        batch_size,
+        seq_len,
+        max_new_tokens,
+        gpu="",
     )
+    return experiment_name
 
+
+def get_gpu() -> str:
+    """
+    Detect the current GPU and return a short token.
+
+    Returns:
+        One of: H100, H200, A100, V100, T4, L4, 4090, or "gpu"/"cpu".
+    """
+    token = None 
+    if not torch.cuda.is_available():
+        token = "cpu"
+
+    name = torch.cuda.get_device_name(0)
+    for key in ["H100", "H200", "A100", "V100", "T4", "L4", "4090"]:
+        if key in name:
+            token = key
+            break
+    
+    assert token, f"Error: Unknown GPU: {name}. Please add support for this GPU in get_gpu()."
+    return token
 
 def calculate_total_inference_time(trace: Dict[str, Any]) -> float:
     """
