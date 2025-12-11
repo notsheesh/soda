@@ -412,6 +412,7 @@ class ModelTracer:
         
         self.precision = utils.parse_dtype_to_torch(args.precision)
         self.load_precision = torch.bfloat16 if self.is_fp8 else self.precision
+
         # Set random seeds
         torch.manual_seed(args.seed)
         np.random.seed(args.seed)
@@ -436,18 +437,23 @@ class ModelTracer:
         self.is_encoder = any(model.lower() in self.model_name.lower() for model in encoder_models)
         self.is_decoder = not (self.is_encoder or self.is_whisper)
 
-        # Derive experiment/output paths
-        self.experiment_name = utils.generate_experiment_name(
+        # Derive experiment group and name 
+        self.experiment_group, self.experiment_name = utils.get_experiment_signature(
             self.model_name,
             self.compile_type,
             args.precision,
             self.batch_size,
             self.seq_len,
             self.max_new_tokens,
+            gpu=utils.get_gpu(),
         )
 
-        # Output directory for trace: <output_dir>/<experiment_name>
-        self.output_dir = args.output_dir / self.experiment_name
+        # Output directory for experiment group: <output_dir>/<experiment_group>
+        self.experiment_group_dir = args.output_dir / self.experiment_group
+        utils.ensure_dir(self.experiment_group_dir)
+        
+        # Output directory for trace: <output_dir>/<experiment_group>/<experiment_name>
+        self.output_dir = args.output_dir / self.experiment_group / self.experiment_name
         utils.ensure_dir(self.output_dir)
         
         # Set EXPERIMENT_DIR environment variable for microbench scripts

@@ -11,6 +11,7 @@ import os
 import sys
 from itertools import product
 from pathlib import Path
+from typing import Dict
 
 import torch
 import json 
@@ -19,7 +20,7 @@ from datetime import datetime
 from soda import ModelTracer, SodaAnalyzer
 from soda.common import utils
 from experiments.sweep.summarize_soda_sweep import summarize as summarize_soda_sweep
-from experiments.sweep.config import PARAMS, PREF_SWEEP_CONFIG, DEC_SWEEP_CONFIG, DEBUG_SWEEP_CONFIG, FP8_SWEEP_CONFIG
+from experiments.sweep.config import GEN_PARAMS, PRECISION_MAP, SWEEP_CONFIG_MAP
 
 def ensure_env_loaded() -> None:
     """Exit early if env.sh was not sourced."""
@@ -27,7 +28,6 @@ def ensure_env_loaded() -> None:
         print("Error: SODA environment not loaded.", file=sys.stderr)
         print("Please run: source env.sh", file=sys.stderr)
         sys.exit(1)
-
 
 def get_gpu_suffix() -> str:
     """Returns a short GPU suffix (e.g., H100, A100) or 'cpu'."""
@@ -43,85 +43,68 @@ def get_gpu_suffix() -> str:
     if "4090" in name: return "4090"
     return "gpu"
 
+def filter_sweep_config(sweep_config: Dict, sweep_model_filter: str) -> Dict:
+    # Parse "export SWEEP_MODEL_FILTER=a,b,c" into ["a", "b", "c"], strip whitespaces and drop empty strings
+    requested_models = [m.strip() for m in sweep_model_filter.split(",") if m.strip()] 
+    filtered_sweep_config = {} # Populate this with intersection of requested_models and sweep_config
+    avail_model_str = ", ".join(sweep_config.keys())
+
+    # Scan through requested_models and add to filtered_sweep_config if found in sweep_config
+    for model in requested_models:
+        if model in sweep_config:
+            filtered_sweep_config[model] = sweep_config[model]
+        else:
+            log = f"Warning: Model '{model}' not found in sweep config for {sweep_mode}.\nAvailable models: {avail_model_str}"
+            print(log, file=sys.stderr)
+
+    assert filtered_sweep_config, f"Error: No valid models found in sweep config for {sweep_mode}.\nAvailable models: {avail_model_str}"
+
 def main() -> None:
     ensure_env_loaded()
 
-    sweep_roots = set()
     gpu_suffix = get_gpu_suffix()
 
-    compile_type = PARAMS["compile_type"]
-    precision = PARAMS["precision"]
-    device = PARAMS["device"]
-    warmup = PARAMS["inference_warmup"]
+    compile_type = GEN_PARAMS["compile_type"]
+    device = GEN_PARAMS["device"]
+    warmup = GEN_PARAMS["inference_warmup"]
 
-    # select config from env variable 
-    config_type = os.environ.get("SODA_SWEEP_CONFIG", "prefill").lower()
-    if config_type == "decode":
-        SWEEP_CONFIG = DEC_SWEEP_CONFIG
-    elif config_type == "debug":
-        SWEEP_CONFIG = DEBUG_SWEEP_CONFIG
-    elif config_type == "fp8":
-        # Verify H100/H200 for FP8
-        if gpu_suffix not in ("H100", "H200"):
-            print(f"Error: FP8 requires H100/H200 GPU. Detected: {gpu_suffix}", file=sys.stderr)
-            sys.exit(1)
-        SWEEP_CONFIG = FP8_SWEEP_CONFIG
-        # FIX: Update precision variable so the sweep root directory is named correctly
-        precision = "float8_e4m3fn"
-    elif config_type == "all":
-        SWEEP_CONFIG = dict(PREF_SWEEP_CONFIG)
-        for k, v in DEC_SWEEP_CONFIG.items():
-            key = f"{k}_dec" if k in SWEEP_CONFIG else k
-            SWEEP_CONFIG[key] = v
-    else:
-        SWEEP_CONFIG = PREF_SWEEP_CONFIG
+    assert "SWEEP_MODE" in os.environ, "Error: SWEEP_MODE environment variable is not set. Please set export SWEEP_MODE=<prefill|decode|fp8|debug|all> in your shell."
+    sweep_mode = os.environ["SWEEP_MODE"]  # Use export SWEEP_MODE=<prefill|decode|fp8|debug|all> in your shell.
+    sweep_model_filter = os.environ.get("SWEEP_MODEL_FILTER")  # Use export SWEEP_MODEL_FILTER=gpt2,llama3_1b,qwen_moe in your shell.
 
-    model_filter = os.environ.get("SODA_SWEEP_MODEL")
-    if model_filter:
-        models = [m.strip() for m in model_filter.split(",")]
-        filtered = {}
-        for m in models:
-            if m in SWEEP_CONFIG:
-                filtered[m] = SWEEP_CONFIG[m]
-            else:
-                print(f"Warning: Model '{m}' not found in {config_type} config. Available: {list(SWEEP_CONFIG.keys())}", file=sys.stderr)
-        if not filtered:
-            print(f"Error: No valid models found. Exiting.", file=sys.stderr)
-            sys.exit(1)
-        SWEEP_CONFIG = filtered
-    
-    print(f"Running sweep config: {config_type}")
-    print(f"Models: {list(SWEEP_CONFIG.keys())}")
+    # FP8 requires H100/H200
+    if sweep_mode == "fp8":
+        assert gpu_suffix in ("H100", "H200"), f"Error: FP8 requires H100/H200 GPU. Detected: {gpu_suffix}"
 
+    # Get sweep config and precision
+    sweep_config = SWEEP_CONFIG_MAP[sweep_mode]
+    precision = PRECISION_MAP[sweep_mode]
 
-    for config_name, cfg in SWEEP_CONFIG.items():
-        model = cfg["model_name"]
-        batch_sizes = cfg["batch_sizes"]
-        seq_lens = cfg["seq_lens"]
-        max_new_toks = cfg["max_new_toks"]
+    # Filter out models from sweep config based on SWEEP_MODEL_FILTER 
+    if sweep_model_filter:
+        filtered_sweep_config = filter_sweep_config(sweep_config, sweep_model_filter)
+        sweep_config = filtered_sweep_config
 
-        run_precision = cfg.get("precision", precision)
+    sweep_config_str = ", ".join(sweep_config.keys())
+    print(f"Sweeping models in {sweep_mode} sweep config: {sweep_config_str}")
 
-        # Group sweep outputs under a common prefix (model + compile_type + precision)
-        max_tok_str = f"mt{max_new_toks[0]}"  # Use the first value since it's typically a single-element list
-        sweep_root = Path(os.environ.get("SODA_OUTPUT", "output")) / f"{model.replace('/', '_')}_{compile_type}_{run_precision}_{max_tok_str}_{gpu_suffix}"
-        sweep_roots.add(sweep_root)
-        print(f"\n=== Running config: {config_name} ({model})  with precision={run_precision} ===")
+    for config_name, config in sweep_config.items():
+        model = config["model_name"]
+        batch_sizes = config["batch_sizes"]
+        seq_lens = config["seq_lens"]
+        max_new_toks = config["max_new_toks"]
 
-        for bs, sl, max_new_tokens in product(batch_sizes, seq_lens, max_new_toks):
-            print(f"\n\n\n=== Running sweep point: batch_size={bs}, seq_len={sl}, max_new_tokens={max_new_tokens} ===")
-            exp_name = utils.generate_experiment_name(model, compile_type, run_precision, bs, sl, max_new_tokens)
+        # Group sweep outputs under base output; ModelTracer will create group/name
+        print(f"\n=== Running config: {config_name} ({model}) with precision={precision}")
+
+        experiment_group_dir = None
+        for bs, sl, mt in product(batch_sizes, seq_lens, max_new_toks):
+            print(f"\n\n\n=== Running sweep point: batch_size={bs}, seq_len={sl}, max_new_tokens={mt}")
             cli_args = [
-                "--model", model,
-                "--output-dir", str(sweep_root),
-                "--batch-size", str(bs),
-                "--seq-len", str(sl),
-                "--max-new-tokens", str(max_new_tokens),
-                "--precision", run_precision,
-                "--compile-type", compile_type,
-                "--device", "cuda",
-                "--device", device,
+                "--model", model, "--batch-size", str(bs), "--seq-len", str(sl), "--max-new-tokens", str(mt),
+                "--precision", precision, "--compile-type", compile_type, "--device", device,
                 "--warmup", warmup,
+
                 # Extra parser knobs (fusion + microbench) left at defaults:
                 # "--fusion", "2",
                 # "--prox-score", "1.0",
@@ -142,12 +125,13 @@ def main() -> None:
                 analyzer = SodaAnalyzer(tracer=tracer, args=args)
                 report_path = analyzer.run()
                 print(f"Report saved to: {report_path}")
+
             except RuntimeError as e:
                 if "out of memory" in str(e).lower():
-                    print(f"Skipping bs={bs}, sl={sl}, max_new_tokens={max_new_tokens} due to OOM: {e}", file=sys.stderr)
+                    print(f"Skipping batch_size={bs}, seq_len={sl}, max_new_tokens={mt} due to OOM: {e}", file=sys.stderr)
                     
                     # FIX: Generate a report.json that MATCHES soda.py structure
-                    run_output_dir = sweep_root / exp_name
+                    run_output_dir = tracer.output_dir
                     run_output_dir.mkdir(parents=True, exist_ok=True)
                     
                     oom_report = {
@@ -157,8 +141,8 @@ def main() -> None:
                             "config": {
                                 "batch_size": bs,
                                 "seq_len": sl,
-                                "max_new_tokens": max_new_tokens,
-                                "precision": run_precision,
+                                "max_new_tokens": mt,
+                                "precision": precision,
                                 "compile_type": compile_type,
                                 "device": device,
                                 "gpu_name": gpu_suffix
@@ -178,28 +162,9 @@ def main() -> None:
                     continue
                 raise
 
-    if sweep_roots:
-        print("\n=== Summarizing completed sweep directories ===")
-        for root in sorted(sweep_roots, key=lambda p: str(p)):
-            if not root.exists():
-                print(f"Skipping summary for {root}: path does not exist", file=sys.stderr)
-                continue
-            
-            # Extract max_tok_str from the folder name
-            # e.g., "meta-llama_Llama-3.2-1B_eager_bfloat16_mt10_T4" -> "mt10"
-            folder_name = root.name
-            max_tok_str = None
-            for part in folder_name.split("_"):
-                if part.startswith("mt"):
-                    max_tok_str = part
-                    break
-            
-            try:
-                # PASS both gpu_suffix and max_tok_str
-                summarize_soda_sweep(root, gpu_name_override=gpu_suffix, max_tok_override=max_tok_str)
-            except RuntimeError as exc:
-                print(f"Failed to summarize {root}: {exc}", file=sys.stderr)
-
+        # Summarize the experiment group 
+        experiment_group_dir = tracer.experiment_group_dir
+        summarize_soda_sweep(experiment_group_dir, gpu_name_override=gpu_suffix, max_tok_override=None)
 
 if __name__ == "__main__":
     main()
